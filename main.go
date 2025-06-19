@@ -1,21 +1,96 @@
 package main
 
 import (
-  "fmt"
+	"fmt"
+	"io"
+	"net/http"
+	"strconv"
 )
 
-//TIP <p>To run your code, right-click the code and select <b>Run</b>.</p> <p>Alternatively, click
-// the <icon src="AllIcons.Actions.Execute"/> icon in the gutter and select the <b>Run</b> menu item from here.</p>
+func hellohandler(w http.ResponseWriter, r *http.Request) {
+	_, err := fmt.Fprintf(w, "Hello, World!")
+	if err != nil {
+		fmt.Fprintf(w, "%v\n", err)
+	}
+
+}
+
+type Record struct {
+	task      string
+	completed bool
+}
+
+var m = make(map[int]*Record)
+var i int = 0
+
+func addTask(w http.ResponseWriter, r *http.Request) {
+
+	defer r.Body.Close()
+	msg, _ := io.ReadAll(r.Body)
+	m[i] = &Record{string(msg), false}
+	i++
+
+}
+
+func getByID(w http.ResponseWriter, r *http.Request) {
+
+	defer r.Body.Close()
+	index, err := strconv.Atoi(r.PathValue("id"))
+	if err != nil {
+		fmt.Fprintf(w, "%v\n", err)
+		return
+	}
+	fmt.Fprintf(w, "%v\n", m[index])
+
+}
+
+func viewTask(w http.ResponseWriter, r *http.Request) {
+	for _, task := range m {
+		fmt.Fprintf(w, "%v\n", task)
+	}
+}
+
+func completeTask(w http.ResponseWriter, r *http.Request) {
+
+	defer r.Body.Close()
+	index, err := strconv.Atoi(r.PathValue("id"))
+	if err != nil {
+		fmt.Fprintf(w, "%v\n", err)
+		return
+	}
+
+	t, ok := m[index]
+	if !ok {
+		fmt.Fprintf(w, "%v is not found\n", index)
+		w.WriteHeader(404)
+		return
+	}
+
+	t.completed = true
+}
+
+func deleteTask(w http.ResponseWriter, r *http.Request) {
+	defer r.Body.Close()
+	index, err := strconv.Atoi(r.PathValue("id"))
+	if err != nil {
+		fmt.Fprintf(w, "%v\n", err)
+		return
+	}
+	delete(m, index)
+}
 
 func main() {
-  //TIP <p>Press <shortcut actionId="ShowIntentionActions"/> when your caret is at the underlined text
-  // to see how GoLand suggests fixing the warning.</p><p>Alternatively, if available, click the lightbulb to view possible fixes.</p>
-  s := "gopher"
-  fmt.Printf("Hello and welcome, %s!\n", s)
+	http.HandleFunc("/", hellohandler)
 
-  for i := 1; i <= 5; i++ {
-	//TIP <p>To start your debugging session, right-click your code in the editor and select the Debug option.</p> <p>We have set one <icon src="AllIcons.Debugger.Db_set_breakpoint"/> breakpoint
-	// for you, but you can always add more by pressing <shortcut actionId="ToggleLineBreakpoint"/>.</p>
-	fmt.Println("i =", 100/i)
-  }
+	http.HandleFunc("POST /task", addTask)
+	http.HandleFunc("GET /task/{id}", getByID)
+	http.HandleFunc("GET /task", viewTask)
+	http.HandleFunc("PATCH /task/{id}", completeTask)
+	http.HandleFunc("DELETE /task/{id}", deleteTask)
+
+	err := http.ListenAndServe(":8080", nil)
+
+	if err != nil {
+		fmt.Println("Not able to start server")
+	}
 }
