@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -8,26 +9,43 @@ import (
 )
 
 func hellohandler(w http.ResponseWriter, r *http.Request) {
-	_, err := fmt.Fprintf(w, "Hello, World!")
+	_, err := w.Write([]byte("Hello, World!"))
 	if err != nil {
-		fmt.Fprintf(w, "%v\n", err)
+		w.WriteHeader(http.StatusInternalServerError)
+		w.Write([]byte(err.Error()))
 	}
 
 }
 
 type Record struct {
-	task      string
-	completed bool
+	Id        int
+	Task      string
+	Completed bool
 }
 
-var m = make(map[int]*Record)
+var m = make(map[int][]byte)
 var i int = 0
 
 func addTask(w http.ResponseWriter, r *http.Request) {
 
 	defer r.Body.Close()
-	msg, _ := io.ReadAll(r.Body)
-	m[i] = &Record{string(msg), false}
+	msg, err := io.ReadAll(r.Body)
+	if err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		w.Write([]byte(err.Error()))
+	}
+
+	rec := Record{i, string(msg), false}
+
+	json_rec, err := json.Marshal(rec)
+	if err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		w.Write([]byte(err.Error()))
+		return
+	}
+
+	w.WriteHeader(http.StatusCreated)
+	m[i] = json_rec
 	i++
 
 }
@@ -37,16 +55,19 @@ func getByID(w http.ResponseWriter, r *http.Request) {
 	defer r.Body.Close()
 	index, err := strconv.Atoi(r.PathValue("id"))
 	if err != nil {
-		fmt.Fprintf(w, "%v\n", err)
+		w.WriteHeader(http.StatusNotFound)
+		w.Write([]byte(err.Error()))
 		return
 	}
-	fmt.Fprintf(w, "%v\n", m[index])
+	w.WriteHeader(http.StatusAccepted)
+	w.Write([]byte(m[index]))
 
 }
 
 func viewTask(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusOK)
 	for _, task := range m {
-		fmt.Fprintf(w, "%v\n", task)
+		w.Write(task)
 	}
 }
 
@@ -55,27 +76,41 @@ func completeTask(w http.ResponseWriter, r *http.Request) {
 	defer r.Body.Close()
 	index, err := strconv.Atoi(r.PathValue("id"))
 	if err != nil {
-		fmt.Fprintf(w, "%v\n", err)
+		w.WriteHeader(http.StatusNotFound)
+		w.Write([]byte(err.Error()))
 		return
 	}
 
-	t, ok := m[index]
-	if !ok {
-		fmt.Fprintf(w, "%v is not found\n", index)
-		w.WriteHeader(404)
+	var json_slice Record
+	err = json.Unmarshal(m[index], &json_slice)
+	if err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		w.Write([]byte(err.Error()))
 		return
 	}
 
-	t.completed = true
+	json_slice.Completed = true
+
+	updated_json, err := json.Marshal(json_slice)
+	if err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		w.Write([]byte(err.Error()))
+		return
+	}
+	w.WriteHeader(http.StatusAccepted)
+	m[index] = updated_json
+
 }
 
 func deleteTask(w http.ResponseWriter, r *http.Request) {
 	defer r.Body.Close()
 	index, err := strconv.Atoi(r.PathValue("id"))
 	if err != nil {
-		fmt.Fprintf(w, "%v\n", err)
+		w.WriteHeader(http.StatusNotFound)
+		w.Write([]byte(err.Error()))
 		return
 	}
+	w.WriteHeader(http.StatusOK)
 	delete(m, index)
 }
 
@@ -85,7 +120,7 @@ func main() {
 	http.HandleFunc("POST /task", addTask)
 	http.HandleFunc("GET /task/{id}", getByID)
 	http.HandleFunc("GET /task", viewTask)
-	http.HandleFunc("PATCH /task/{id}", completeTask)
+	http.HandleFunc("PUT /task/{id}", completeTask)
 	http.HandleFunc("DELETE /task/{id}", deleteTask)
 
 	err := http.ListenAndServe(":8080", nil)
