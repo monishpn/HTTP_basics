@@ -2,130 +2,208 @@ package main
 
 import (
 	"encoding/json"
-	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"strconv"
+	"time"
 )
 
-func hellohandler(w http.ResponseWriter, r *http.Request) {
+func hellohandler(w http.ResponseWriter, _ *http.Request) {
 	_, err := w.Write([]byte("Hello, World!"))
 	if err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
-		w.Write([]byte(err.Error()))
-	}
+		log.Printf("%s", err.Error())
+		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
 
+		return
+	}
 }
 
 type Record struct {
-	Id        int
+	ID        int
 	Task      string
 	Completed bool
 }
 
-var m = make(map[int][]byte)
-var i int = 0
+type input struct {
+	idx int
+	Rec []byte
+}
 
-func addTask(w http.ResponseWriter, r *http.Request) {
+type slices struct {
+	slice []input
+}
 
+func idGen() func() int {
+	id := 0
+
+	return func() int {
+		id++
+		return id
+	}
+}
+
+func (re *slices) addTask(w http.ResponseWriter, r *http.Request, getID func() int) {
 	defer r.Body.Close()
+
 	msg, err := io.ReadAll(r.Body)
 	if err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
-		w.Write([]byte(err.Error()))
+		log.Printf("%s", err.Error())
+		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+
+		return
 	}
+
+	i := getID()
 
 	rec := Record{i, string(msg), false}
 
-	json_rec, err := json.Marshal(rec)
+	jsonRec, err := json.Marshal(rec)
 	if err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
-		w.Write([]byte(err.Error()))
+		log.Printf("%s", err.Error())
+		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+
 		return
 	}
+
+	re.slice = append(re.slice, input{i, jsonRec})
 
 	w.WriteHeader(http.StatusCreated)
-	m[i] = json_rec
-	i++
-
 }
 
-func getByID(w http.ResponseWriter, r *http.Request) {
-
+func (re *slices) getByID(w http.ResponseWriter, r *http.Request) {
 	defer r.Body.Close()
+
 	index, err := strconv.Atoi(r.PathValue("id"))
 	if err != nil {
 		w.WriteHeader(http.StatusNotFound)
-		w.Write([]byte(err.Error()))
+		log.Printf("%s", err.Error())
+		http.Error(w, http.StatusText(http.StatusNotFound), http.StatusNotFound)
+
 		return
 	}
-	w.WriteHeader(http.StatusAccepted)
-	w.Write([]byte(m[index]))
 
+	for _, item := range re.slice {
+		if item.idx == index {
+			w.WriteHeader(http.StatusOK)
+			log.Printf("%s", item.Rec)
+
+			return
+		}
+	}
+
+	w.WriteHeader(http.StatusNotFound)
 }
 
-func viewTask(w http.ResponseWriter, r *http.Request) {
+func (re *slices) viewTask(w http.ResponseWriter, _ *http.Request) {
 	w.WriteHeader(http.StatusOK)
-	for _, task := range m {
-		w.Write(task)
+
+	for _, task := range re.slice {
+		log.Printf("task: %s", task.Rec)
 	}
+
+	log.Printf("\n")
 }
 
-func completeTask(w http.ResponseWriter, r *http.Request) {
-
+func (re *slices) completeTask(w http.ResponseWriter, r *http.Request) {
 	defer r.Body.Close()
+
 	index, err := strconv.Atoi(r.PathValue("id"))
 	if err != nil {
 		w.WriteHeader(http.StatusNotFound)
-		w.Write([]byte(err.Error()))
+		log.Printf("%s", err.Error())
+		http.Error(w, http.StatusText(http.StatusNotFound), http.StatusNotFound)
+
 		return
 	}
 
-	var json_slice Record
-	err = json.Unmarshal(m[index], &json_slice)
-	if err != nil {
-		w.WriteHeader(http.StatusInternalServerError)
-		w.Write([]byte(err.Error()))
+	var jsonSlice Record
+
+	for i, item := range re.slice {
+		if item.idx != index {
+			continue
+		}
+
+		err := json.Unmarshal(item.Rec, &jsonSlice)
+		if err != nil {
+			w.WriteHeader(http.StatusInternalServerError)
+			log.Printf("%s", err.Error())
+
+			return
+		}
+
+		w.WriteHeader(http.StatusOK)
+
+		jsonSlice.Completed = true
+
+		updatedJSON, err := json.Marshal(jsonSlice)
+		if err != nil {
+			w.WriteHeader(http.StatusInternalServerError)
+			log.Printf("%s", err.Error())
+			http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+
+			return
+		}
+
+		w.WriteHeader(http.StatusAccepted)
+
+		re.slice[i].Rec = updatedJSON
+
 		return
 	}
 
-	json_slice.Completed = true
-
-	updated_json, err := json.Marshal(json_slice)
-	if err != nil {
-		w.WriteHeader(http.StatusInternalServerError)
-		w.Write([]byte(err.Error()))
-		return
-	}
-	w.WriteHeader(http.StatusAccepted)
-	m[index] = updated_json
-
+	w.WriteHeader(http.StatusNotFound)
 }
 
-func deleteTask(w http.ResponseWriter, r *http.Request) {
+func (re *slices) deleteTask(w http.ResponseWriter, r *http.Request) {
 	defer r.Body.Close()
+
 	index, err := strconv.Atoi(r.PathValue("id"))
 	if err != nil {
 		w.WriteHeader(http.StatusNotFound)
-		w.Write([]byte(err.Error()))
+		log.Printf("%s", err.Error())
+		http.Error(w, http.StatusText(http.StatusNotFound), http.StatusNotFound)
+
 		return
 	}
-	w.WriteHeader(http.StatusOK)
-	delete(m, index)
+
+	for i, item := range re.slice {
+		if item.idx == index {
+			w.WriteHeader(http.StatusOK)
+
+			re.slice = append(re.slice[:i], re.slice[i+1:]...)
+
+			return
+		}
+	}
+
+	w.WriteHeader(http.StatusNotFound)
 }
 
 func main() {
+	data := &slices{}
+	getID := idGen()
+
 	http.HandleFunc("/", hellohandler)
 
-	http.HandleFunc("POST /task", addTask)
-	http.HandleFunc("GET /task/{id}", getByID)
-	http.HandleFunc("GET /task", viewTask)
-	http.HandleFunc("PUT /task/{id}", completeTask)
-	http.HandleFunc("DELETE /task/{id}", deleteTask)
+	http.HandleFunc("POST /task", func(w http.ResponseWriter, r *http.Request) {
+		data.addTask(w, r, getID)
+	})
+	http.HandleFunc("GET /task/{id}", data.getByID)
+	http.HandleFunc("GET /task", data.viewTask)
+	http.HandleFunc("PUT /task/{id}", data.completeTask)
+	http.HandleFunc("DELETE /task/{id}", data.deleteTask)
 
-	err := http.ListenAndServe(":8080", nil)
-
-	if err != nil {
-		fmt.Println("Not able to start server")
+	srv := &http.Server{
+		Addr:         ":8080",
+		Handler:      nil, // same as default mux
+		ReadTimeout:  5 * time.Second,
+		WriteTimeout: 10 * time.Second,
+		IdleTimeout:  120 * time.Second,
 	}
+
+	log.Fatal(srv.ListenAndServe())
 }
